@@ -12,8 +12,25 @@ android {
         applicationId = "com.tabek.mindfulpause"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 8
+        versionName = "0.8.0"
+    }
+
+    // Release signing. Secrets come from environment variables so nothing
+    // sensitive lives in git: locally they can be set in the shell; in CI
+    // they are injected from GitHub Secrets. If the keystore is absent the
+    // config is simply skipped (debug builds still work).
+    val keystorePath = System.getenv("KEYSTORE_PATH") ?: "../keystore/release.jks"
+    val keystoreFile = file(keystorePath)
+    signingConfigs {
+        if (keystoreFile.exists()) {
+            create("release") {
+                storeFile = keystoreFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "pausa2026"
+                keyAlias = System.getenv("KEY_ALIAS") ?: "pausa"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: "pausa2026"
+            }
+        }
     }
 
     buildTypes {
@@ -23,6 +40,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (keystoreFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {

@@ -15,3 +15,8 @@ build*.log
 
 # Kotlin compiler cache
 .kotlin/
+
+# Signing keys — NEVER commit these
+/keystore/
+*.jks
+*.keystore
