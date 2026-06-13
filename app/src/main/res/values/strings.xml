@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Пауза</string>
+    <string name="accessibility_service_label">Пауза — перехват приложений</string>
+    <string name="accessibility_service_description">Позволяет приложению замечать, когда вы открываете выбранную соцсеть, и показывать экран осознанной паузы. Данные никуда не отправляются.</string>
+</resources>
