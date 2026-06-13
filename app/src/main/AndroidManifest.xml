@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission"
         xmlns:tools="http://schemas.android.com/tools" />
+    <!-- Ask to be exempt from battery optimization so the accessibility
+         service isn't killed (and its permission silently revoked). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="true"

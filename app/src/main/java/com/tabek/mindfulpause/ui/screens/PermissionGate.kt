@@ -36,23 +36,26 @@ import com.tabek.mindfulpause.ui.theme.TextPrimary
 fun PermissionGate(
     overlayGranted: Boolean,
     accessibilityEnabled: Boolean,
+    batteryUnrestricted: Boolean,
     onRequestOverlay: () -> Unit,
     onRequestAccessibility: () -> Unit,
+    onRequestBattery: () -> Unit,
 ) {
+    val allReady = overlayGranted && accessibilityEnabled && batteryUnrestricted
     GlassCard {
         Column(Modifier.padding(18.dp)) {
             Text(
-                text = if (overlayGranted && accessibilityEnabled) "Всё готово" else "Нужны два разрешения",
+                text = if (allReady) "Всё готово" else "Настройка разрешений",
                 color = TextPrimary,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = if (overlayGranted && accessibilityEnabled)
+                text = if (allReady)
                     "Приложение готово замечать выбранные соцсети."
                 else
-                    "Без них приложение не сможет замечать соцсети и показывать паузу.",
+                    "Выдай все три, иначе пауза может перестать срабатывать.",
                 color = TextMuted,
                 fontSize = 14.sp,
             )
@@ -72,6 +75,14 @@ fun PermissionGate(
                 description = "Позволяет показать экран паузы над соцсетью.",
                 granted = overlayGranted,
                 onClick = onRequestOverlay,
+            )
+            Spacer(Modifier.height(12.dp))
+            PermissionStep(
+                index = 3,
+                title = "Отключить экономию батареи",
+                description = "Без этого система выгружает службу и разрешение слетает.",
+                granted = batteryUnrestricted,
+                onClick = onRequestBattery,
             )
         }
     }

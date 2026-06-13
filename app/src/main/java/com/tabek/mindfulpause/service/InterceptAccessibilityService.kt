@@ -94,6 +94,12 @@ class InterceptAccessibilityService : AccessibilityService() {
         // Ignore our own UI (settings + the overlay itself).
         if (pkg == packageName) return
 
+        // Ignore transient system UI — share sheets, permission dialogs, the
+        // notification shade, keyboards, etc. These briefly come to the front
+        // but are NOT a real app switch, so they must not be treated as the
+        // user leaving the app (which would re-trigger the pause on return).
+        if (isTransientSystemUi(pkg)) return
+
         // We only care when the FOREGROUND package actually changes. Repeated
         // window events inside the same app (dialogs, keyboards) keep the same
         // foreground and must not re-trigger.
@@ -173,6 +179,28 @@ class InterceptAccessibilityService : AccessibilityService() {
     private fun nextMidnight(now: Long): Long =
         BlockRepository.dayStart(now) + 24L * 60 * 60 * 1000
 
+    /**
+     * Packages that briefly take the foreground but aren't a real app switch:
+     * the share sheet, permission dialogs, the notification shade, recents,
+     * and the active input method. We skip these so opening a share sheet
+     * inside YouTube doesn't look like leaving YouTube.
+     */
+    private fun isTransientSystemUi(pkg: String): Boolean {
+        if (pkg in TRANSIENT_PACKAGES) return true
+        // The current keyboard (IME) — resolved once, cached.
+        if (pkg == imePackage) return true
+        return false
+    }
+
+    private val imePackage: String? by lazy {
+        runCatching {
+            android.provider.Settings.Secure.getString(
+                contentResolver,
+                android.provider.Settings.Secure.DEFAULT_INPUT_METHOD,
+            )?.substringBefore("/")
+        }.getOrNull()
+    }
+
     private fun goHome() {
         // Leaving to home stamps the away-time and clears the foreground latch.
         grantedPackage?.let { lastGrantAt[it] = SystemClock.elapsedRealtime() }
@@ -197,5 +225,17 @@ class InterceptAccessibilityService : AccessibilityService() {
         private const val TAG = "InterceptService"
         /** Re-show the pause if the user has been away from the app this long. */
         private const val RE_PAUSE_MS = 60_000L
+
+        /** System UI packages that are not a real app switch. */
+        private val TRANSIENT_PACKAGES = setOf(
+            "android",                                  // share sheet, chooser (older)
+            "com.android.systemui",                     // shade, recents, volume
+            "com.android.intentresolver",               // share sheet (Android 14+)
+            "com.google.android.intentresolver",
+            "com.android.internal.app.ResolverActivity",
+            "com.android.permissioncontroller",         // permission dialogs
+            "com.google.android.permissioncontroller",
+            "com.android.systemui.recents",
+        )
     }
 }
