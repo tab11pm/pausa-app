@@ -95,7 +95,14 @@ class InterceptAccessibilityService : AccessibilityService() {
             lastHandledPackage = null
         }
 
-        if (pkg !in trackedApps) return
+        val now = System.currentTimeMillis()
+        val block = timedBlocks[pkg]
+        val limit = dailyLimits[pkg]
+        val isBlockApp = (block != null && block.isActive(now)) || limit != null
+
+        // The package matters only if it's tracked for the pause OR has any
+        // blocking rule. Blocking must work independently of the pause toggle.
+        if (pkg !in trackedApps && !isBlockApp) return
 
         // Respect a recent "Продолжить" grant for this package.
         if (pkg == grantedPackage && SystemClock.elapsedRealtime() < grantExpiresAt) {
@@ -105,10 +112,7 @@ class InterceptAccessibilityService : AccessibilityService() {
         // Already showing / just showed for this package — don't stack overlays.
         if (pkg == lastHandledPackage || overlay.isShowing) return
 
-        val now = System.currentTimeMillis()
-
         // 1) Active timed block? Show the lock screen with a countdown.
-        val block = timedBlocks[pkg]
         if (block != null && block.isActive(now)) {
             lastHandledPackage = pkg
             overlay.showBlocked(
@@ -120,7 +124,6 @@ class InterceptAccessibilityService : AccessibilityService() {
         }
 
         // 2) Daily open-limit reached? Lock until midnight.
-        val limit = dailyLimits[pkg]
         if (limit != null && (openCounts[pkg] ?: 0) >= limit) {
             lastHandledPackage = pkg
             overlay.showBlocked(
@@ -131,18 +134,26 @@ class InterceptAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 3) Otherwise the normal mindful pause. Count the open on "Продолжить".
-        lastHandledPackage = pkg
-        overlay.show(
-            targetPackage = pkg,
-            onContinue = {
-                grantPackage(pkg)
-                if (dailyLimits.containsKey(pkg)) {
-                    scope.launch { blocks.registerOpen(pkg, System.currentTimeMillis()) }
-                }
-            },
-            onExit = { goHome() },
-        )
+        // 3) Not blocked. If the app is tracked, show the mindful pause and
+        //    count the open (toward any daily limit) when the user continues.
+        if (pkg in trackedApps) {
+            lastHandledPackage = pkg
+            overlay.show(
+                targetPackage = pkg,
+                onContinue = {
+                    grantPackage(pkg)
+                    if (dailyLimits.containsKey(pkg)) {
+                        scope.launch { blocks.registerOpen(pkg, System.currentTimeMillis()) }
+                    }
+                },
+                onExit = { goHome() },
+            )
+        } else if (limit != null) {
+            // Limit-only app (no pause): silently count the open and let it through.
+            lastHandledPackage = pkg
+            grantPackage(pkg)
+            scope.launch { blocks.registerOpen(pkg, System.currentTimeMillis()) }
+        }
     }
 
     private fun nextMidnight(now: Long): Long =
