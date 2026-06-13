@@ -33,6 +33,7 @@ fun HomeScreen(
     vm: MainViewModel,
     onRequestOverlay: () -> Unit,
     onRequestAccessibility: () -> Unit,
+    onRequestBattery: () -> Unit,
 ) {
     val permissions by vm.permissions.collectAsState()
     val tracked by vm.trackedApps.collectAsState()
@@ -63,12 +64,16 @@ fun HomeScreen(
         )
         Spacer(Modifier.height(24.dp))
 
-        if (!permissions.allGranted) {
+        // Show the gate until core perms are granted AND battery is exempt
+        // (battery is the usual reason the pause "stops working" on Samsung).
+        if (!permissions.allGranted || !permissions.batteryUnrestricted) {
             PermissionGate(
                 overlayGranted = permissions.overlayGranted,
                 accessibilityEnabled = permissions.accessibilityEnabled,
+                batteryUnrestricted = permissions.batteryUnrestricted,
                 onRequestOverlay = onRequestOverlay,
                 onRequestAccessibility = onRequestAccessibility,
+                onRequestBattery = onRequestBattery,
             )
             Spacer(Modifier.height(24.dp))
         }

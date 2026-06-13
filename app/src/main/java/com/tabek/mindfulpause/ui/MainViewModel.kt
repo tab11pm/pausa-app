@@ -15,6 +15,7 @@ import com.tabek.mindfulpause.data.TimedBlock
 import com.tabek.mindfulpause.data.canDrawOverlays
 import com.tabek.mindfulpause.data.computeStats
 import com.tabek.mindfulpause.data.isAccessibilityServiceEnabled
+import com.tabek.mindfulpause.data.isIgnoringBatteryOptimizations
 import com.tabek.mindfulpause.data.loadLaunchableApps
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,7 +31,10 @@ import kotlinx.coroutines.withContext
 data class PermissionState(
     val overlayGranted: Boolean = false,
     val accessibilityEnabled: Boolean = false,
+    val batteryUnrestricted: Boolean = false,
 ) {
+    /** Core permissions required for the app to function. Battery exemption is
+     *  strongly recommended but not strictly required, so it's not gated here. */
     val allGranted: Boolean get() = overlayGranted && accessibilityEnabled
 }
 
@@ -93,6 +97,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _permissions.value = PermissionState(
             overlayGranted = canDrawOverlays(ctx),
             accessibilityEnabled = isAccessibilityServiceEnabled(ctx),
+            batteryUnrestricted = isIgnoringBatteryOptimizations(ctx),
         )
     }
 

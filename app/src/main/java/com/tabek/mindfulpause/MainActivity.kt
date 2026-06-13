@@ -26,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.tabek.mindfulpause.data.requestIgnoreBatteryOptimizationsIntent
 import com.tabek.mindfulpause.ui.MainViewModel
 import com.tabek.mindfulpause.ui.screens.HomeScreen
 import com.tabek.mindfulpause.ui.screens.StatsScreen
@@ -84,6 +85,7 @@ class MainActivity : ComponentActivity() {
                                     vm = vm,
                                     onRequestOverlay = ::openOverlaySettings,
                                     onRequestAccessibility = ::openAccessibilitySettings,
+                                    onRequestBattery = ::requestBatteryExemption,
                                 )
                                 Tab.STATS -> StatsScreen(vm = vm)
                             }
@@ -112,6 +114,17 @@ class MainActivity : ComponentActivity() {
 
     private fun openAccessibilitySettings() {
         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+
+    private fun requestBatteryExemption() {
+        runCatching {
+            startActivity(requestIgnoreBatteryOptimizationsIntent(this))
+        }.onFailure {
+            // Some OEMs lack the direct dialog; fall back to the settings list.
+            runCatching {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            }
+        }
     }
 }
 
