@@ -4,11 +4,14 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tabek.mindfulpause.data.AppInfo
+import com.tabek.mindfulpause.data.BlockRepository
+import com.tabek.mindfulpause.data.DailyLimit
 import com.tabek.mindfulpause.data.EventLog
 import com.tabek.mindfulpause.data.PauseConfig
 import com.tabek.mindfulpause.data.Period
 import com.tabek.mindfulpause.data.SettingsRepository
 import com.tabek.mindfulpause.data.Stats
+import com.tabek.mindfulpause.data.TimedBlock
 import com.tabek.mindfulpause.data.canDrawOverlays
 import com.tabek.mindfulpause.data.computeStats
 import com.tabek.mindfulpause.data.isAccessibilityServiceEnabled
@@ -19,6 +22,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -34,6 +38,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = SettingsRepository(app)
     private val eventLog = EventLog(app)
+    private val blocks = BlockRepository(app)
+
+    /** Active timed blocks, keyed by package. */
+    val timedBlocks: StateFlow<Map<String, TimedBlock>> =
+        blocks.timedBlocks
+            .map { list -> list.associateBy { it.packageName } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** Daily open limits, keyed by package. */
+    val dailyLimits: StateFlow<Map<String, Int>> =
+        blocks.dailyLimits
+            .map { list -> list.associate { it.packageName to it.maxOpens } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     /** Selected stats period (drives the Stats screen). */
     private val _period = MutableStateFlow(Period.WEEK)
@@ -101,4 +118,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setTimer(enabled: Boolean, seconds: Int? = null) =
         viewModelScope.launch { repo.setTimer(enabled, seconds) }
+
+    // ---- Blocking actions ----------------------------------------------
+
+    /** Block an app for [durationMs] (null = indefinite). */
+    fun blockApp(packageName: String, durationMs: Long?) =
+        viewModelScope.launch {
+            blocks.setTimedBlock(packageName, System.currentTimeMillis(), durationMs)
+        }
+
+    fun unblockApp(packageName: String) =
+        viewModelScope.launch { blocks.clearTimedBlock(packageName) }
+
+    /** Set a daily open limit (null/0 removes it). */
+    fun setDailyLimit(packageName: String, maxOpens: Int?) =
+        viewModelScope.launch { blocks.setDailyLimit(packageName, maxOpens) }
 }

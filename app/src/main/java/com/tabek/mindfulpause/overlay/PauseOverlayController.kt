@@ -107,6 +107,58 @@ class PauseOverlayController(
         }
     }
 
+    /**
+     * Show the full-screen "blocked" lock for [targetPackage]. [untilMs] is when
+     * the block lifts (null = indefinite). The countdown self-dismisses and
+     * returns home when it reaches zero.
+     */
+    fun showBlocked(
+        targetPackage: String,
+        untilMs: Long?,
+        onBack: () -> Unit,
+    ) {
+        if (isShowing) return
+
+        val lifecycleOwner = OverlayLifecycleOwner().apply { onCreate(); onResume() }
+
+        val composeView = ComposeView(context).apply {
+            setViewTreeLifecycleOwner(lifecycleOwner)
+            setViewTreeViewModelStoreOwner(lifecycleOwner)
+            setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+            isFocusableInTouchMode = true
+            setOnKeyListener { _, keyCode, ev ->
+                if (keyCode == KeyEvent.KEYCODE_BACK && ev.action == KeyEvent.ACTION_UP) {
+                    onBack()
+                    dismiss(lifecycleOwner)
+                    true
+                } else false
+            }
+            setContent {
+                BlockedScreen(
+                    untilMs = untilMs,
+                    onBack = {
+                        onBack()
+                        dismiss(lifecycleOwner)
+                    },
+                    onElapsed = {
+                        // Block expired while on screen — let the user proceed.
+                        onBack()
+                        dismiss(lifecycleOwner)
+                    },
+                )
+            }
+        }
+
+        try {
+            windowManager.addView(composeView, buildLayoutParams())
+            composeView.requestFocus()
+            rootView = composeView
+        } catch (t: Throwable) {
+            lifecycleOwner.onDestroy()
+            onBack()
+        }
+    }
+
     fun dismiss() = dismiss(null)
 
     private fun dismiss(owner: OverlayLifecycleOwner?) {
