@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -50,7 +52,9 @@ import com.tabek.mindfulpause.ui.theme.TextPrimary
 fun AppPicker(
     apps: List<AppInfo>,
     tracked: Set<String>,
+    blockedPackages: Set<String>,
     onToggle: (String, Boolean) -> Unit,
+    onOpenBlock: (String) -> Unit,
 ) {
     GlassCard {
         if (apps.isEmpty()) {
@@ -99,7 +103,9 @@ fun AppPicker(
                     app = app,
                     checked = app.packageName in tracked,
                     suggested = app.packageName in SUGGESTED_PACKAGES,
+                    blocked = app.packageName in blockedPackages,
                     onCheckedChange = { onToggle(app.packageName, it) },
+                    onLockClick = { onOpenBlock(app.packageName) },
                 )
                 if (i < visible.lastIndex) {
                     HorizontalDivider(
@@ -152,12 +158,14 @@ private fun AppRow(
     app: AppInfo,
     checked: Boolean,
     suggested: Boolean,
+    blocked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    onLockClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val iconPainter = remember(app.packageName) { app.icon?.let { IconPainter(it) } }
@@ -176,6 +184,14 @@ private fun AppRow(
             if (suggested) {
                 Text("соцсеть", color = Accent, fontSize = 12.sp)
             }
+        }
+        // Lock button — opens the blocking sheet for this app.
+        IconButton(onClick = onLockClick) {
+            Icon(
+                imageVector = if (blocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                contentDescription = "Блокировка",
+                tint = if (blocked) Accent else TextMuted,
+            )
         }
         Switch(
             checked = checked,
