@@ -47,16 +47,20 @@ class InterceptAccessibilityService : AccessibilityService() {
     @Volatile private var dailyLimits: Map<String, Int> = emptyMap()
     @Volatile private var openCounts: Map<String, Int> = emptyMap()
 
-    /** Package we last raised the pause for, to avoid re-triggering on every
-     *  sub-window change inside the same app session. */
-    private var lastHandledPackage: String? = null
+    /** The package currently in the foreground (last distinct one we saw).
+     *  We only act when the foreground package *changes* into a target app —
+     *  i.e. a real open — not on every sub-window event inside it. */
+    private var currentForeground: String? = null
 
-    /** When the user picks "Продолжить", we grant a short grace window so the
-     *  app they just allowed doesn't immediately re-trigger the pause. */
+    /** Per-package timestamp (elapsedRealtime) of when we last let the user
+     *  into it (after "Продолжить") or when they left it. If they return
+     *  within RE_PAUSE_MS the pause is skipped; after that gap it pauses again. */
+    private val lastGrantAt = HashMap<String, Long>()
+
+    /** Package the user is currently inside after continuing, so leaving it
+     *  can stamp the "left at" time. */
     @Volatile
     private var grantedPackage: String? = null
-    @Volatile
-    private var grantExpiresAt: Long = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -90,31 +94,33 @@ class InterceptAccessibilityService : AccessibilityService() {
         // Ignore our own UI (settings + the overlay itself).
         if (pkg == packageName) return
 
-        // Leaving a tracked app resets the de-dupe latch so re-entering pauses again.
-        if (pkg != lastHandledPackage) {
-            lastHandledPackage = null
+        // We only care when the FOREGROUND package actually changes. Repeated
+        // window events inside the same app (dialogs, keyboards) keep the same
+        // foreground and must not re-trigger.
+        if (pkg == currentForeground) return
+        val previous = currentForeground
+        currentForeground = pkg
+        val elapsedNow = SystemClock.elapsedRealtime()
+
+        // When leaving a granted app, stamp the "left at" time so we can tell
+        // how long the user has been away when they come back.
+        if (previous != null && previous == grantedPackage) {
+            lastGrantAt[previous] = elapsedNow
+            grantedPackage = null
         }
 
         val now = System.currentTimeMillis()
         val block = timedBlocks[pkg]
         val limit = dailyLimits[pkg]
-        val isBlockApp = (block != null && block.isActive(now)) || limit != null
+        val hasRule = (block != null && block.isActive(now)) || limit != null
 
-        // The package matters only if it's tracked for the pause OR has any
-        // blocking rule. Blocking must work independently of the pause toggle.
-        if (pkg !in trackedApps && !isBlockApp) return
+        // Acts only on tracked apps (pause) or apps with a blocking rule.
+        if (pkg !in trackedApps && !hasRule) return
 
-        // Respect a recent "Продолжить" grant for this package.
-        if (pkg == grantedPackage && SystemClock.elapsedRealtime() < grantExpiresAt) {
-            return
-        }
+        if (overlay.isShowing) return
 
-        // Already showing / just showed for this package — don't stack overlays.
-        if (pkg == lastHandledPackage || overlay.isShowing) return
-
-        // 1) Active timed block? Show the lock screen with a countdown.
+        // 1) Active timed block → lock screen with countdown.
         if (block != null && block.isActive(now)) {
-            lastHandledPackage = pkg
             overlay.showBlocked(
                 targetPackage = pkg,
                 untilMs = if (block.isIndefinite) null else block.untilMs,
@@ -123,9 +129,8 @@ class InterceptAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 2) Daily open-limit reached? Lock until midnight.
+        // 2) Daily open-limit reached → lock until midnight.
         if (limit != null && (openCounts[pkg] ?: 0) >= limit) {
-            lastHandledPackage = pkg
             overlay.showBlocked(
                 targetPackage = pkg,
                 untilMs = nextMidnight(now),
@@ -134,24 +139,33 @@ class InterceptAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 3) Not blocked. If the app is tracked, show the mindful pause and
-        //    count the open (toward any daily limit) when the user continues.
+        // Recently continued into this app and came back quickly? Skip the
+        // pause. After RE_PAUSE_MS away, it pauses again.
+        val grantedAt = lastGrantAt[pkg]
+        if (grantedAt != null && elapsedNow - grantedAt < RE_PAUSE_MS) {
+            grantedPackage = pkg               // we're inside it again
+            lastGrantAt[pkg] = elapsedNow      // keep the grant fresh while here
+            return
+        }
+
+        // 3) Not blocked, and the grace window has expired. Tracked → mindful
+        //    pause (count the open toward any daily limit on continue).
         if (pkg in trackedApps) {
-            lastHandledPackage = pkg
             overlay.show(
                 targetPackage = pkg,
                 onContinue = {
-                    grantPackage(pkg)
-                    if (dailyLimits.containsKey(pkg)) {
+                    grantedPackage = pkg
+                    lastGrantAt[pkg] = SystemClock.elapsedRealtime()
+                    if (limit != null) {
                         scope.launch { blocks.registerOpen(pkg, System.currentTimeMillis()) }
                     }
                 },
                 onExit = { goHome() },
             )
         } else if (limit != null) {
-            // Limit-only app (no pause): silently count the open and let it through.
-            lastHandledPackage = pkg
-            grantPackage(pkg)
+            // Limit-only app (no pause): count this open and let it through.
+            grantedPackage = pkg
+            lastGrantAt[pkg] = elapsedNow
             scope.launch { blocks.registerOpen(pkg, System.currentTimeMillis()) }
         }
     }
@@ -159,13 +173,11 @@ class InterceptAccessibilityService : AccessibilityService() {
     private fun nextMidnight(now: Long): Long =
         BlockRepository.dayStart(now) + 24L * 60 * 60 * 1000
 
-    private fun grantPackage(pkg: String) {
-        grantedPackage = pkg
-        grantExpiresAt = SystemClock.elapsedRealtime() + GRANT_WINDOW_MS
-    }
-
     private fun goHome() {
-        lastHandledPackage = null
+        // Leaving to home stamps the away-time and clears the foreground latch.
+        grantedPackage?.let { lastGrantAt[it] = SystemClock.elapsedRealtime() }
+        grantedPackage = null
+        currentForeground = null
         val home = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -183,6 +195,7 @@ class InterceptAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "InterceptService"
-        private const val GRANT_WINDOW_MS = 30_000L
+        /** Re-show the pause if the user has been away from the app this long. */
+        private const val RE_PAUSE_MS = 60_000L
     }
 }
