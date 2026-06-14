@@ -1,9 +1,8 @@
 package com.tabek.mindfulpause.ui.screens
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,13 +12,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,12 +41,19 @@ fun HomeScreen(
     val config by vm.pauseConfig.collectAsState()
     val timedBlocks by vm.timedBlocks.collectAsState()
     val dailyLimits by vm.dailyLimits.collectAsState()
+    val hasUsagePermission by vm.hasUsagePermission.collectAsState()
+    val context = LocalContext.current
 
     // Which app's block sheet is open (null = none).
     var sheetPackage by remember { mutableStateOf<String?>(null) }
     val now = remember { System.currentTimeMillis() }
     val blockedPackages = remember(timedBlocks, dailyLimits) {
         timedBlocks.filterValues { it.isActive(now) }.keys + dailyLimits.keys
+    }
+
+    // Refresh usage stats when screen is shown
+    LaunchedEffect(Unit) {
+        vm.refreshUsageStats()
     }
 
     Column(
@@ -75,6 +82,39 @@ fun HomeScreen(
                 onRequestAccessibility = onRequestAccessibility,
                 onRequestBattery = onRequestBattery,
             )
+            Spacer(Modifier.height(24.dp))
+        }
+
+        // Usage stats permission prompt
+        if (!hasUsagePermission) {
+            GlassCard {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                ) {
+                    Text(
+                        "Статистика использования",
+                        color = TextPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Разрешите доступ к статистике, чтобы видеть время использования приложений",
+                        color = TextMuted,
+                        fontSize = 14.sp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                        },
+                    ) {
+                        Text("Открыть настройки", color = Accent)
+                    }
+                }
+            }
             Spacer(Modifier.height(24.dp))
         }
 

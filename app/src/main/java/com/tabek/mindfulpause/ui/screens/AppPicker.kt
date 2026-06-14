@@ -40,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import com.tabek.mindfulpause.data.AppInfo
-import com.tabek.mindfulpause.data.SUGGESTED_PACKAGES
 import com.tabek.mindfulpause.ui.theme.Accent
 import com.tabek.mindfulpause.ui.theme.AccentDeep
 import com.tabek.mindfulpause.ui.theme.Divider
@@ -69,10 +68,10 @@ fun AppPicker(
 
         var query by rememberSaveable { mutableStateOf("") }
 
-        // Suggested social apps that are actually installed float to the top.
+        // Sort by usage time (descending), then alphabetically for equal usage.
         val ordered = remember(apps) {
             apps.sortedWith(
-                compareByDescending<AppInfo> { it.packageName in SUGGESTED_PACKAGES }
+                compareByDescending<AppInfo> { it.usageTimeMs }
                     .thenBy { it.label.lowercase() }
             )
         }
@@ -102,7 +101,6 @@ fun AppPicker(
                 AppRow(
                     app = app,
                     checked = app.packageName in tracked,
-                    suggested = app.packageName in SUGGESTED_PACKAGES,
                     blocked = app.packageName in blockedPackages,
                     onCheckedChange = { onToggle(app.packageName, it) },
                     onLockClick = { onOpenBlock(app.packageName) },
@@ -157,7 +155,6 @@ private fun SearchField(
 private fun AppRow(
     app: AppInfo,
     checked: Boolean,
-    suggested: Boolean,
     blocked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     onLockClick: () -> Unit,
@@ -181,8 +178,12 @@ private fun AppRow(
         Spacer(Modifier.size(12.dp))
         Column(Modifier.weight(1f)) {
             Text(app.label, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            if (suggested) {
-                Text("соцсеть", color = Accent, fontSize = 12.sp)
+            if (app.usageTimeMs > 0) {
+                Text(
+                    formatUsageTime(app.usageTimeMs),
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                )
             }
         }
         // Lock button — opens the blocking sheet for this app.
@@ -205,6 +206,22 @@ private fun AppRow(
             ),
         )
     }
+}
+
+private fun formatUsageTime(ms: Long): String {
+    val minutes = ms / 1000 / 60
+    val time = when {
+        minutes < 1 -> "< 1 мин"
+        minutes < 60 -> "${minutes} мин"
+        else -> {
+            val hours = minutes / 60
+            val remainingMinutes = minutes % 60
+            if (remainingMinutes == 0L) "${hours} ч"
+            else "${hours} ч ${remainingMinutes} мин"
+        }
+    }
+    // Usage is aggregated over the last 7 days, so label it as a weekly total.
+    return "$time за неделю"
 }
 
 /** Wraps a Drawable app icon as a Compose Painter. */
