@@ -3,6 +3,7 @@ package com.tabek.mindfulpause.data
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.os.Build
 import android.os.Process
 import java.util.Calendar
 
@@ -14,11 +15,22 @@ data class AppUsageTime(
 /** Check if the user has granted PACKAGE_USAGE_STATS permission. */
 fun hasUsageStatsPermission(context: Context): Boolean {
     val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-    val mode = appOps.unsafeCheckOpNoThrow(
-        AppOpsManager.OPSTR_GET_USAGE_STATS,
-        Process.myUid(),
-        context.packageName,
-    )
+    // unsafeCheckOpNoThrow exists only on API 29+; on API 26-28 the equivalent
+    // is the now-deprecated checkOpNoThrow. minSdk is 26, so guard the call.
+    @Suppress("DEPRECATION")
+    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        appOps.unsafeCheckOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName,
+        )
+    } else {
+        appOps.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName,
+        )
+    }
     return mode == AppOpsManager.MODE_ALLOWED
 }
 
