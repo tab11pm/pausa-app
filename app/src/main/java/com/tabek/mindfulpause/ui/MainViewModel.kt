@@ -14,6 +14,8 @@ import com.tabek.mindfulpause.data.Stats
 import com.tabek.mindfulpause.data.TimedBlock
 import com.tabek.mindfulpause.data.canDrawOverlays
 import com.tabek.mindfulpause.data.computeStats
+import com.tabek.mindfulpause.data.getUsageStats
+import com.tabek.mindfulpause.data.hasUsageStatsPermission
 import com.tabek.mindfulpause.data.isAccessibilityServiceEnabled
 import com.tabek.mindfulpause.data.isIgnoringBatteryOptimizations
 import com.tabek.mindfulpause.data.loadLaunchableApps
@@ -90,6 +92,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _installedApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val installedApps: StateFlow<List<AppInfo>> = _installedApps.asStateFlow()
 
+    private val _hasUsagePermission = MutableStateFlow(false)
+    val hasUsagePermission: StateFlow<Boolean> = _hasUsagePermission.asStateFlow()
+
     /** Re-read permission state — call from Activity onResume since the user
      *  grants these in external system screens. */
     fun refreshPermissions() {
@@ -99,13 +104,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             accessibilityEnabled = isAccessibilityServiceEnabled(ctx),
             batteryUnrestricted = isIgnoringBatteryOptimizations(ctx),
         )
+        _hasUsagePermission.value = hasUsageStatsPermission(ctx)
     }
 
     fun loadApps() {
         if (_installedApps.value.isNotEmpty()) return
         viewModelScope.launch {
-            val apps = withContext(Dispatchers.IO) { loadLaunchableApps(getApplication()) }
-            _installedApps.value = apps
+            val ctx = getApplication<Application>()
+            val apps = withContext(Dispatchers.IO) { loadLaunchableApps(ctx) }
+            val usageMap = withContext(Dispatchers.IO) {
+                if (hasUsageStatsPermission(ctx)) getUsageStats(ctx) else emptyMap()
+            }
+            _installedApps.value = apps.map { app ->
+                app.copy(usageTimeMs = usageMap[app.packageName] ?: 0L)
+            }
+        }
+    }
+
+    fun refreshUsageStats() {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val usageMap = withContext(Dispatchers.IO) {
+                if (hasUsageStatsPermission(ctx)) getUsageStats(ctx) else emptyMap()
+            }
+            _installedApps.value = _installedApps.value.map { app ->
+                app.copy(usageTimeMs = usageMap[app.packageName] ?: 0L)
+            }
         }
     }
 
