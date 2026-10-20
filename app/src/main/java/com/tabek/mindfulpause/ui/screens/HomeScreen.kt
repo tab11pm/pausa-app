@@ -141,6 +141,10 @@ fun HomeScreen(
         Spacer(Modifier.height(24.dp))
 
         // App picker
+        SectionTitle("РЕЗЕРВНАЯ КОПИЯ")
+        BackupSettings(vm)
+        Spacer(Modifier.height(24.dp))
+
         SectionTitle("ОТСЛЕЖИВАТЬ ПРИЛОЖЕНИЯ")
         AppPicker(
             apps = apps,
