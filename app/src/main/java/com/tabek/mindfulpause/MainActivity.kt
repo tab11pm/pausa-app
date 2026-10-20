@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -23,12 +24,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.tabek.mindfulpause.data.requestIgnoreBatteryOptimizationsIntent
 import com.tabek.mindfulpause.ui.MainViewModel
 import com.tabek.mindfulpause.ui.screens.HomeScreen
+import com.tabek.mindfulpause.ui.screens.SettingsScreen
 import com.tabek.mindfulpause.ui.screens.StatsScreen
 import com.tabek.mindfulpause.ui.theme.Accent
 import com.tabek.mindfulpause.ui.theme.AccentDeep
@@ -61,7 +63,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = Background,
                 ) {
-                    var tab by remember { mutableStateOf(Tab.HOME) }
+                    var tab by rememberSaveable { mutableStateOf(Tab.HOME) }
                     Scaffold(
                         containerColor = Background,
                         bottomBar = {
@@ -80,6 +82,13 @@ class MainActivity : ComponentActivity() {
                                     label = { Text("Статистика") },
                                     colors = navColors(),
                                 )
+                                NavigationBarItem(
+                                    selected = tab == Tab.SETTINGS,
+                                    onClick = { tab = Tab.SETTINGS },
+                                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                                    label = { Text("Настройки") },
+                                    colors = navColors(),
+                                )
                             }
                         },
                     ) { inner ->
@@ -95,6 +104,7 @@ class MainActivity : ComponentActivity() {
                                     onRequestBattery = ::requestBatteryExemption,
                                 )
                                 Tab.STATS -> StatsScreen(vm = vm)
+                                Tab.SETTINGS -> SettingsScreen(vm = vm)
                             }
                         }
                     }
@@ -103,7 +113,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private enum class Tab { HOME, STATS }
+    private enum class Tab { HOME, STATS, SETTINGS }
 
     override fun onResume() {
         super.onResume()
