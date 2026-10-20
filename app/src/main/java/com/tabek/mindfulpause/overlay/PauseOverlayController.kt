@@ -44,6 +44,10 @@ class PauseOverlayController(
         context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
     private var rootView: View? = null
+    private var activeOwner: OverlayLifecycleOwner? = null
+
+    var isReminderShowing: Boolean = false
+        private set
 
     val isShowing: Boolean get() = rootView != null
 
@@ -56,6 +60,7 @@ class PauseOverlayController(
 
         scope.launch {
             val config = repo.pauseConfig.first()
+            if (isShowing) return@launch
 
             val lifecycleOwner = OverlayLifecycleOwner().apply { onCreate(); onResume() }
 
@@ -98,6 +103,7 @@ class PauseOverlayController(
                 windowManager.addView(composeView, params)
                 composeView.requestFocus()
                 rootView = composeView
+                activeOwner = lifecycleOwner
             } catch (t: Throwable) {
                 // Overlay permission revoked mid-flight, etc. Fail open: let the
                 // user into the app rather than getting stuck.
@@ -153,9 +159,40 @@ class PauseOverlayController(
             windowManager.addView(composeView, buildLayoutParams())
             composeView.requestFocus()
             rootView = composeView
+            activeOwner = lifecycleOwner
         } catch (t: Throwable) {
             lifecycleOwner.onDestroy()
             onBack()
+        }
+    }
+
+    /** A separate decision screen: reminders do not count as new app opens. */
+    fun showReminder(onSnooze: () -> Unit, onExit: () -> Unit) {
+        if (isShowing) return
+        val owner = OverlayLifecycleOwner().apply { onCreate(); onResume() }
+        val view = ComposeView(context).apply {
+            setViewTreeLifecycleOwner(owner)
+            setViewTreeViewModelStoreOwner(owner)
+            setViewTreeSavedStateRegistryOwner(owner)
+            isFocusableInTouchMode = true
+            setOnKeyListener { _, keyCode, _ -> keyCode == KeyEvent.KEYCODE_BACK }
+            setContent {
+                ReminderScreen(
+                    onExit = { dismiss(); onExit() },
+                    onSnooze = { dismiss(); onSnooze() },
+                )
+            }
+        }
+        try {
+            windowManager.addView(view, buildLayoutParams())
+            rootView = view
+            activeOwner = owner
+            isReminderShowing = true
+            view.requestFocus()
+        } catch (_: Throwable) {
+            owner.onDestroy()
+            // Fail open; retry only after the snooze interval.
+            onSnooze()
         }
     }
 
@@ -168,7 +205,9 @@ class PauseOverlayController(
             } catch (_: Throwable) { /* already detached */ }
         }
         rootView = null
-        owner?.onDestroy()
+        isReminderShowing = false
+        (activeOwner ?: owner)?.onDestroy()
+        activeOwner = null
     }
 
     private fun buildLayoutParams(): WindowManager.LayoutParams {

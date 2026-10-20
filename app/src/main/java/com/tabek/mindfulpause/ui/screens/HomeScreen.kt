@@ -39,6 +39,7 @@ fun HomeScreen(
     val tracked by vm.trackedApps.collectAsState()
     val apps by vm.installedApps.collectAsState()
     val config by vm.pauseConfig.collectAsState()
+    val reminderConfig by vm.reminderConfig.collectAsState()
     val timedBlocks by vm.timedBlocks.collectAsState()
     val dailyLimits by vm.dailyLimits.collectAsState()
     val hasUsagePermission by vm.hasUsagePermission.collectAsState()
@@ -129,6 +130,14 @@ fun HomeScreen(
                 onTimer = { vm.setTimer(it) },
             )
         }
+        Spacer(Modifier.height(24.dp))
+
+        SectionTitle("НАПОМИНАНИЯ")
+        ReminderSettings(
+            config = reminderConfig,
+            onEnabled = vm::setReminderEnabled,
+            onInterval = vm::setReminderInterval,
+        )
         Spacer(Modifier.height(24.dp))
 
         // App picker

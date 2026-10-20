@@ -42,6 +42,8 @@ class SettingsRepository(private val context: Context) {
         val MESSAGE = stringPreferencesKey("message")
         val TIMER_ENABLED = booleanPreferencesKey("timer_enabled")
         val TIMER_SECONDS = intPreferencesKey("timer_seconds")
+        val REMINDER_ENABLED = booleanPreferencesKey("reminder_enabled")
+        val REMINDER_MINUTES = intPreferencesKey("reminder_minutes")
         val REFLECTED_COUNT = intPreferencesKey("reflected_count")
         val CONTINUED_COUNT = intPreferencesKey("continued_count")
     }
@@ -54,6 +56,23 @@ class SettingsRepository(private val context: Context) {
 
     val trackedApps: Flow<Set<String>> =
         context.dataStore.data.map { it[Keys.TRACKED_APPS] ?: emptySet() }
+
+    val reminderConfig: Flow<ReminderConfig> = context.dataStore.data.map { p ->
+        ReminderConfig(
+            enabled = p[Keys.REMINDER_ENABLED] ?: false,
+            intervalMinutes = p[Keys.REMINDER_MINUTES]
+                ?.takeIf { it in ReminderConfig.INTERVALS } ?: 5,
+        )
+    }
+
+    suspend fun setReminderEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.REMINDER_ENABLED] = enabled }
+    }
+
+    suspend fun setReminderInterval(minutes: Int) {
+        require(minutes in ReminderConfig.INTERVALS)
+        context.dataStore.edit { it[Keys.REMINDER_MINUTES] = minutes }
+    }
 
     val pauseConfig: Flow<PauseConfig> = context.dataStore.data.map { p ->
         PauseConfig(
