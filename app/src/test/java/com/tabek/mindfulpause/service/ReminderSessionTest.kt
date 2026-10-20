@@ -1,10 +1,20 @@
 package com.tabek.mindfulpause.service
 
 import junit.framework.TestCase
-import com.tabek.mindfulpause.BuildConfig
+import com.tabek.mindfulpause.data.ReminderConfig
 
 class ReminderSessionTest : TestCase() {
     private val session = ReminderSession()
+
+    fun testFirstReminderHonorsSelectedInterval() {
+        val cases = listOf(5 to 300_000L, 10 to 600_000L, 15 to 900_000L, 30 to 1_800_000L)
+        for ((minutes, deadline) in cases) {
+            val config = ReminderConfig(enabled = true, intervalMinutes = minutes)
+            session.start("app", 0, config.intervalMs)
+            assertNull(session.takeDue(deadline - 1, "app", true))
+            assertEquals("app", session.takeDue(deadline, "app", true))
+        }
+    }
 
     fun testReminderAppearsAtDeadlineOnlyOnce() {
         session.start("app", 1_000, 300_000)
@@ -13,11 +23,11 @@ class ReminderSessionTest : TestCase() {
         assertNull(session.takeDue(601_000, "app", true))
     }
 
-    fun testSnoozeUsesDebugIntervalEvenWithLongInitialInterval() {
+    fun testSnoozeAlwaysAddsFiveMinutesEvenWithLongInitialInterval() {
         session.start("app", 0, 1_800_000)
         assertEquals("app", session.takeDue(1_800_000, "app", true))
         assertTrue(session.snooze("app", 1_800_100))
-        val deadline = if (BuildConfig.DEBUG) 1_830_100L else 2_100_100L
+        val deadline = 2_100_100L
         assertNull(session.takeDue(deadline - 1, "app", true))
         assertEquals("app", session.takeDue(deadline, "app", true))
     }

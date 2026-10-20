@@ -1,7 +1,6 @@
 package com.tabek.mindfulpause.service
 
 import junit.framework.TestCase
-import com.tabek.mindfulpause.BuildConfig
 
 class ForegroundPolicyTest : TestCase() {
     fun testLateOverlayEventDoesNotCancelFiveMinuteSnooze() {
@@ -16,7 +15,7 @@ class ForegroundPolicyTest : TestCase() {
             )) {
             session.cancel()
         }
-        val deadline = if (BuildConfig.DEBUG) 330_100L else 600_100L
+        val deadline = 600_100L
         assertNull(session.takeDue(deadline - 1, "tracked.app", true))
         assertEquals("tracked.app", session.takeDue(deadline, "tracked.app", true))
     }
