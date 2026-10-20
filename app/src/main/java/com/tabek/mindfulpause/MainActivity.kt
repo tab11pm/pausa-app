@@ -37,8 +37,15 @@ import com.tabek.mindfulpause.ui.theme.MindfulPauseTheme
 import com.tabek.mindfulpause.ui.theme.SurfaceGlass
 import com.tabek.mindfulpause.ui.theme.TextMuted
 import com.tabek.mindfulpause.ui.theme.TextPrimary
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        private val resumed = MutableStateFlow(false)
+        internal val isForeground = resumed.asStateFlow()
+    }
 
     private val vm: MainViewModel by viewModels()
 
@@ -100,8 +107,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        resumed.value = true
         // Permissions are granted in external system screens, so re-check here.
         vm.refreshPermissions()
+    }
+
+    override fun onPause() {
+        resumed.value = false
+        super.onPause()
     }
 
     private fun openOverlaySettings() {

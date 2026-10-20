@@ -26,8 +26,8 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Build debug APK and run lint
-        run: ./gradlew :app:assembleDebug lint --no-daemon
+      - name: Build debug APK, run tests and lint
+        run: ./gradlew :app:assembleDebug test lint --no-daemon
 
       - name: Upload lint report
         if: always()

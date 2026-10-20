@@ -8,6 +8,7 @@ import com.tabek.mindfulpause.data.BlockRepository
 import com.tabek.mindfulpause.data.DailyLimit
 import com.tabek.mindfulpause.data.EventLog
 import com.tabek.mindfulpause.data.PauseConfig
+import com.tabek.mindfulpause.data.ReminderConfig
 import com.tabek.mindfulpause.data.Period
 import com.tabek.mindfulpause.data.SettingsRepository
 import com.tabek.mindfulpause.data.Stats
@@ -79,6 +80,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val pauseConfig: StateFlow<PauseConfig?> =
         repo.pauseConfig.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val reminderConfig: StateFlow<ReminderConfig> =
+        repo.reminderConfig.stateIn(viewModelScope, SharingStarted.Eagerly, ReminderConfig())
+
+    fun setReminderEnabled(enabled: Boolean) =
+        viewModelScope.launch { repo.setReminderEnabled(enabled) }
+
+    fun setReminderInterval(minutes: Int) =
+        viewModelScope.launch { repo.setReminderInterval(minutes) }
 
     val reflectedCount: StateFlow<Int> =
         repo.reflectedCount.stateIn(viewModelScope, SharingStarted.Eagerly, 0)

@@ -1,20 +1,31 @@
 package com.tabek.mindfulpause.service
 
 import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import androidx.core.content.ContextCompat
+import com.tabek.mindfulpause.MainActivity
 import com.tabek.mindfulpause.data.BlockRepository
-import com.tabek.mindfulpause.data.DailyLimit
 import com.tabek.mindfulpause.data.EventLog
+import com.tabek.mindfulpause.data.ReminderConfig
 import com.tabek.mindfulpause.data.SettingsRepository
 import com.tabek.mindfulpause.data.TimedBlock
 import com.tabek.mindfulpause.overlay.PauseOverlayController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -62,6 +73,21 @@ class InterceptAccessibilityService : AccessibilityService() {
     @Volatile
     private var grantedPackage: String? = null
 
+    private var reminderConfig = ReminderConfig()
+    private val reminderSession = ReminderSession()
+    private var reminderJob: Job? = null
+    private var screenReceiverRegistered = false
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> cancelReminder("screen_off")
+                Intent.ACTION_USER_PRESENT -> {
+                    grantedPackage?.takeIf { it == currentForeground }?.let(::startReminder)
+                }
+            }
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         repo = SettingsRepository(applicationContext)
@@ -69,8 +95,41 @@ class InterceptAccessibilityService : AccessibilityService() {
         blocks = BlockRepository(applicationContext)
         overlay = PauseOverlayController(this, repo, eventLog, scope)
 
+        ContextCompat.registerReceiver(
+            this, screenReceiver, IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_USER_PRESENT)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        screenReceiverRegistered = true
+
+        // Activity lifecycle distinguishes settings from our own overlay events.
+        // A late event from dismissing an overlay must not cancel a fresh snooze.
+        MainActivity.isForeground
+            .onEach { visible ->
+                if (visible) {
+                    cancelReminder("settings_opened")
+                    grantedPackage?.let { lastGrantAt[it] = SystemClock.elapsedRealtime() }
+                    grantedPackage = null
+                    currentForeground = null
+                }
+            }
+            .launchIn(scope)
+
+        repo.reminderConfig.distinctUntilChanged()
+            .onEach { config ->
+                reminderConfig = config
+                cancelReminder("reminder_settings_changed")
+                grantedPackage?.takeIf { it == currentForeground }?.let(::startReminder)
+            }
+            .launchIn(scope)
+
         repo.trackedApps
-            .onEach { trackedApps = it }
+            .onEach {
+                trackedApps = it
+                if (grantedPackage !in it) cancelReminder("app_untracked")
+            }
             .launchIn(scope)
         blocks.timedBlocks
             .onEach { list -> timedBlocks = list.associateBy { it.packageName } }
@@ -91,19 +150,16 @@ class InterceptAccessibilityService : AccessibilityService() {
 
         val pkg = event.packageName?.toString() ?: return
 
-        // Ignore our own UI (settings + the overlay itself).
-        if (pkg == packageName) return
+        // Settings are observed through the Activity lifecycle above. Own-package
+        // window events can arrive after the overlay has already been removed.
+        if (pkg == packageName) {
+            logReminder("own_window class=${event.className} overlay=${overlay.isShowing}")
+        }
 
-        // Ignore transient system UI — share sheets, permission dialogs, the
-        // notification shade, keyboards, etc. These briefly come to the front
-        // but are NOT a real app switch, so they must not be treated as the
-        // user leaving the app (which would re-trigger the pause on return).
-        if (isTransientSystemUi(pkg)) return
-
-        // We only care when the FOREGROUND package actually changes. Repeated
-        // window events inside the same app (dialogs, keyboards) keep the same
-        // foreground and must not re-trigger.
-        if (pkg == currentForeground) return
+        // System dialogs, keyboards and screenshot tools do not end an app
+        // session. In particular, keep an unanswered reminder on screenshot.
+        if (!ForegroundPolicy.isAppSwitch(currentForeground, pkg, imePackage, packageName)) return
+        cancelReminder("app_switch:$pkg")
         val previous = currentForeground
         currentForeground = pkg
         val elapsedNow = SystemClock.elapsedRealtime()
@@ -151,6 +207,7 @@ class InterceptAccessibilityService : AccessibilityService() {
         if (grantedAt != null && elapsedNow - grantedAt < RE_PAUSE_MS) {
             grantedPackage = pkg               // we're inside it again
             lastGrantAt[pkg] = elapsedNow      // keep the grant fresh while here
+            startReminder(pkg)
             return
         }
 
@@ -162,6 +219,7 @@ class InterceptAccessibilityService : AccessibilityService() {
                 onContinue = {
                     grantedPackage = pkg
                     lastGrantAt[pkg] = SystemClock.elapsedRealtime()
+                    startReminder(pkg)
                     if (limit != null) {
                         scope.launch { blocks.registerOpen(pkg, System.currentTimeMillis()) }
                     }
@@ -179,19 +237,65 @@ class InterceptAccessibilityService : AccessibilityService() {
     private fun nextMidnight(now: Long): Long =
         BlockRepository.dayStart(now) + 24L * 60 * 60 * 1000
 
-    /**
-     * Packages that briefly take the foreground but aren't a real app switch:
-     * the share sheet, permission dialogs, the notification shade, recents,
-     * and the active input method. We skip these so opening a share sheet
-     * inside YouTube doesn't look like leaving YouTube.
-     */
-    private fun isTransientSystemUi(pkg: String): Boolean {
-        if (pkg in TRANSIENT_PACKAGES) return true
-        // The current keyboard (IME) — resolved once, cached.
-        if (pkg == imePackage) return true
-        return false
+    private fun screenActive(): Boolean =
+        getSystemService(PowerManager::class.java).isInteractive &&
+            !getSystemService(KeyguardManager::class.java).isKeyguardLocked
+
+    private fun startReminder(pkg: String) {
+        if (!reminderConfig.enabled || pkg !in trackedApps ||
+            currentForeground != pkg || !screenActive()) return
+        reminderJob?.cancel()
+        reminderSession.start(pkg, SystemClock.elapsedRealtime(), reminderConfig.intervalMs)
+        scheduleReminder(reminderConfig.intervalMs)
     }
 
+    private fun scheduleReminder(delayMs: Long) {
+        logReminder("scheduled delayMs=$delayMs foreground=$currentForeground")
+        reminderJob = scope.launch {
+            delay(delayMs)
+            logReminder("timer_elapsed foreground=$currentForeground screenActive=${screenActive()}")
+            val pkg = reminderSession.takeDue(
+                SystemClock.elapsedRealtime(), currentForeground, screenActive(),
+            ) ?: return@launch
+            if (!reminderConfig.enabled || pkg !in trackedApps || overlay.isShowing) {
+                reminderSession.cancel()
+                return@launch
+            }
+            val block = timedBlocks[pkg]
+            if (block != null && block.isActive(System.currentTimeMillis())) {
+                reminderSession.cancel()
+                overlay.showBlocked(pkg, if (block.isIndefinite) null else block.untilMs) { goHome() }
+                return@launch
+            }
+            overlay.showReminder(
+                onSnooze = {
+                    logReminder("snooze_pressed target=$pkg foreground=$currentForeground")
+                    if (currentForeground == pkg && screenActive() &&
+                        reminderConfig.enabled && pkg in trackedApps &&
+                        reminderSession.snooze(pkg, SystemClock.elapsedRealtime())) {
+                        scheduleReminder(ReminderSession.SNOOZE_MS)
+                    } else cancelReminder("snooze_rejected")
+                },
+                onExit = { goHome() },
+            )
+        }
+    }
+
+    private fun cancelReminder(reason: String) {
+        if (reminderJob != null) logReminder("cancelled reason=$reason")
+        reminderJob?.cancel()
+        reminderJob = null
+        reminderSession.cancel()
+        if (::overlay.isInitialized && overlay.isReminderShowing) overlay.dismiss()
+    }
+
+    private fun logReminder(message: String) {
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            Log.d(TAG, "Reminder: $message")
+        }
+    }
+
+    // Resolve the current keyboard once, matching the existing interception policy.
     private val imePackage: String? by lazy {
         runCatching {
             android.provider.Settings.Secure.getString(
@@ -202,6 +306,7 @@ class InterceptAccessibilityService : AccessibilityService() {
     }
 
     private fun goHome() {
+        cancelReminder("exit_choice")
         // Leaving to home stamps the away-time and clears the foreground latch.
         grantedPackage?.let { lastGrantAt[it] = SystemClock.elapsedRealtime() }
         grantedPackage = null
@@ -217,6 +322,8 @@ class InterceptAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        cancelReminder("service_destroyed")
+        if (screenReceiverRegistered) unregisterReceiver(screenReceiver)
         if (::overlay.isInitialized) overlay.dismiss()
         scope.cancel()
     }
@@ -226,16 +333,5 @@ class InterceptAccessibilityService : AccessibilityService() {
         /** Re-show the pause if the user has been away from the app this long. */
         private const val RE_PAUSE_MS = 60_000L
 
-        /** System UI packages that are not a real app switch. */
-        private val TRANSIENT_PACKAGES = setOf(
-            "android",                                  // share sheet, chooser (older)
-            "com.android.systemui",                     // shade, recents, volume
-            "com.android.intentresolver",               // share sheet (Android 14+)
-            "com.google.android.intentresolver",
-            "com.android.internal.app.ResolverActivity",
-            "com.android.permissioncontroller",         // permission dialogs
-            "com.google.android.permissioncontroller",
-            "com.android.systemui.recents",
-        )
     }
 }
