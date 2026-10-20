@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.map
 import java.util.Calendar
 
 /** Separate DataStore for blocking rules, independent of settings/events. */
-private val Context.blockStore by preferencesDataStore(name = "blocks")
+internal val Context.blockStore by preferencesDataStore(name = "blocks")
 
 /**
  * A timed block on one app. [untilMs] is an absolute time; while now < untilMs

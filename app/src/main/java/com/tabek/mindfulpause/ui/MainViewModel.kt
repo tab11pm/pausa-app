@@ -1,9 +1,15 @@
 package com.tabek.mindfulpause.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tabek.mindfulpause.data.AppInfo
+import com.tabek.mindfulpause.data.BackupCodec
+import com.tabek.mindfulpause.data.BackupRepository
+import com.tabek.mindfulpause.data.blockStore
+import com.tabek.mindfulpause.data.dataStore
+import com.tabek.mindfulpause.data.eventStore
 import com.tabek.mindfulpause.data.BlockRepository
 import com.tabek.mindfulpause.data.DailyLimit
 import com.tabek.mindfulpause.data.EventLog
@@ -21,6 +27,9 @@ import com.tabek.mindfulpause.data.isAccessibilityServiceEnabled
 import com.tabek.mindfulpause.data.isIgnoringBatteryOptimizations
 import com.tabek.mindfulpause.data.loadLaunchableApps
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -41,11 +50,81 @@ data class PermissionState(
     val allGranted: Boolean get() = overlayGranted && accessibilityEnabled
 }
 
+data class BackupUiState(
+    val busy: Boolean = false,
+    val awaitingConfirmation: Boolean = false,
+    val message: String? = null,
+)
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = SettingsRepository(app)
     private val eventLog = EventLog(app)
     private val blocks = BlockRepository(app)
+    private val backups = BackupRepository(mapOf(
+        "settings" to app.dataStore, "blocks" to app.blockStore, "events" to app.eventStore,
+    ))
+    private val _backupState = MutableStateFlow(BackupUiState())
+    val backupState = _backupState.asStateFlow()
+    private var pendingBackup: ByteArray? = null
+
+    fun exportBackup(uri: Uri) = backupAction("Не удалось сохранить копию. Попробуйте выбрать другой файл.") {
+        val bytes = backups.export()
+        val resolver = getApplication<Application>().contentResolver
+        (resolver.openOutputStream(uri, "wt") ?: throw IOException("No output stream")).use {
+            it.write(bytes)
+        }
+        _backupState.value = BackupUiState(message = "Копия сохранена. Её можно восстановить после переустановки.")
+    }
+
+    fun prepareRestore(uri: Uri) = backupAction("Не удалось прочитать копию. Выберите целый файл .mpbackup, созданный приложением.") {
+        val resolver = getApplication<Application>().contentResolver
+        val bytes = (resolver.openInputStream(uri) ?: throw IOException("No input stream")).use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                require(output.size() + read <= BackupCodec.MAX_BYTES) { "Backup too large" }
+                output.write(buffer, 0, read)
+            }
+            output.toByteArray()
+        }
+        BackupCodec.decode(bytes)
+        pendingBackup = bytes
+        _backupState.value = BackupUiState(awaitingConfirmation = true)
+    }
+
+    fun cancelRestore() {
+        if (_backupState.value.busy) return
+        pendingBackup = null
+        _backupState.value = BackupUiState()
+    }
+
+    fun confirmRestore() = backupAction("Не удалось восстановить данные. Попробуйте ещё раз.") {
+        val bytes = pendingBackup ?: throw IOException("No pending backup")
+        try {
+            backups.restore(bytes)
+            _backupState.value = BackupUiState(message = "Статистика и настройки восстановлены.")
+        } finally {
+            pendingBackup = null
+        }
+    }
+
+    private fun backupAction(error: String, action: suspend () -> Unit) {
+        if (_backupState.value.busy) return
+        _backupState.value = BackupUiState(busy = true)
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { action() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                pendingBackup = null
+                _backupState.value = BackupUiState(message = error)
+            }
+        }
+    }
 
     /** Active timed blocks, keyed by package. */
     val timedBlocks: StateFlow<Map<String, TimedBlock>> =

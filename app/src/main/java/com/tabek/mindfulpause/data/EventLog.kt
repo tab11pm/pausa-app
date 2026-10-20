@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.map
 import java.util.Calendar
 
 /** Separate DataStore for the raw pause-event log (kept out of settings). */
-private val Context.eventStore by preferencesDataStore(name = "events")
+internal val Context.eventStore by preferencesDataStore(name = "events")
 
 /** The choice the user made on the pause screen. */
 enum class Choice { REFLECTED, CONTINUED }
