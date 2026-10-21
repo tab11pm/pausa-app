@@ -47,11 +47,11 @@ import java.util.Calendar
 fun StatsScreen(vm: MainViewModel) {
     val stats by vm.stats.collectAsState()
     val period by vm.period.collectAsState()
-    val apps by vm.installedApps.collectAsState()
+    val appLabels by vm.statsAppLabels.collectAsState()
 
     // packageName -> display label, for the per-app breakdown.
     val labelOf: (String) -> String = { pkg ->
-        apps.firstOrNull { it.packageName == pkg }?.label ?: pkg.substringAfterLast('.')
+        appLabels[pkg] ?: pkg.substringAfterLast('.')
     }
 
     Column(

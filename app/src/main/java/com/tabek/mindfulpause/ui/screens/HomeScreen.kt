@@ -39,6 +39,9 @@ fun HomeScreen(
     val permissions by vm.permissions.collectAsState()
     val tracked by vm.trackedApps.collectAsState()
     val apps by vm.installedApps.collectAsState()
+    val appsLoading by vm.appsLoading.collectAsState()
+    val appsError by vm.appsError.collectAsState()
+    var showAllApps by rememberSaveable { mutableStateOf(false) }
     val config by vm.pauseConfig.collectAsState()
     val timedBlocks by vm.timedBlocks.collectAsState()
     val dailyLimits by vm.dailyLimits.collectAsState()
@@ -52,6 +55,9 @@ fun HomeScreen(
 
     LaunchedEffect(Unit) {
         vm.refreshUsageStats()
+    }
+    LaunchedEffect(showAllApps) {
+        vm.loadApps(allApps = showAllApps)
     }
 
     Column(
@@ -134,6 +140,11 @@ fun HomeScreen(
             blockedPackages = blockedPackages,
             onToggle = vm::toggleApp,
             onOpenBlock = { sheetPackage = it },
+            showAllApps = showAllApps,
+            loading = appsLoading,
+            error = appsError,
+            onShowAllAppsChange = { showAllApps = it },
+            onRetry = { vm.loadApps(allApps = showAllApps) },
         )
         Spacer(Modifier.height(40.dp))
     }

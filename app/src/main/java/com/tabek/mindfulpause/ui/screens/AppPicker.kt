@@ -7,9 +7,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
@@ -24,6 +27,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,9 +58,37 @@ fun AppPicker(
     blockedPackages: Set<String>,
     onToggle: (String, Boolean) -> Unit,
     onOpenBlock: (String) -> Unit,
+    showAllApps: Boolean,
+    loading: Boolean,
+    error: String?,
+    onShowAllAppsChange: (Boolean) -> Unit,
+    onRetry: () -> Unit,
 ) {
+    var query by rememberSaveable(showAllApps) { mutableStateOf("") }
+    val ordered = remember(apps, showAllApps) {
+        apps.asSequence()
+            .filter { showAllApps || it.isSocial }
+            .sortedWith(
+                compareByDescending<AppInfo> { it.usageTimeMs }
+                    .thenBy { it.label.lowercase() }
+            ).toList()
+    }
+    val visible = remember(ordered, query) {
+        if (query.isBlank()) ordered
+        else ordered.filter { it.label.contains(query.trim(), ignoreCase = true) }
+    }
+
     GlassCard {
-        if (apps.isEmpty()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+            TextButton(onClick = { onShowAllAppsChange(false) }) {
+                Text("Соцсети", color = if (!showAllApps) Accent else TextMuted)
+            }
+            TextButton(onClick = { onShowAllAppsChange(true) }) {
+                Text("Все приложения", color = if (showAllApps) Accent else TextMuted)
+            }
+        }
+
+        if (loading) {
             Box(
                 Modifier.fillMaxWidth().padding(28.dp),
                 contentAlignment = Alignment.Center,
@@ -66,19 +98,10 @@ fun AppPicker(
             return@GlassCard
         }
 
-        var query by rememberSaveable { mutableStateOf("") }
-
-        // Sort by usage time (descending), then alphabetically for equal usage.
-        val ordered = remember(apps) {
-            apps.sortedWith(
-                compareByDescending<AppInfo> { it.usageTimeMs }
-                    .thenBy { it.label.lowercase() }
-            )
-        }
-        // Filter by the search query (case-insensitive, matches the label).
-        val visible = remember(ordered, query) {
-            if (query.isBlank()) ordered
-            else ordered.filter { it.label.contains(query.trim(), ignoreCase = true) }
+        if (error != null) {
+            Text(error, color = TextMuted, modifier = Modifier.padding(16.dp))
+            TextButton(onClick = onRetry) { Text("Повторить", color = Accent) }
+            return@GlassCard
         }
 
         SearchField(
@@ -91,13 +114,20 @@ fun AppPicker(
                 Modifier.fillMaxWidth().padding(24.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("Ничего не найдено", color = TextMuted, fontSize = 14.sp)
+                Text(
+                    if (query.isBlank() && !showAllApps) "Соцсети не найдены. Откройте «Все приложения»."
+                    else if (query.isBlank()) "Нет доступных приложений"
+                    else "Ничего не найдено",
+                    color = TextMuted,
+                    fontSize = 14.sp,
+                )
             }
             return@GlassCard
         }
 
-        Column {
-            visible.forEachIndexed { i, app ->
+        // A bounded viewport avoids composing every row inside Home's scroll container.
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
+            itemsIndexed(visible, key = { _, app -> app.packageName }) { i, app ->
                 AppRow(
                     app = app,
                     checked = app.packageName in tracked,

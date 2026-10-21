@@ -38,6 +38,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 data class PermissionState(
@@ -180,6 +182,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _installedApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val installedApps: StateFlow<List<AppInfo>> = _installedApps.asStateFlow()
+    private val appLoadMutex = Mutex()
+    private var socialAppsLoaded = false
+    private var allAppsLoaded = false
+    private val _appsLoading = MutableStateFlow(true)
+    val appsLoading = _appsLoading.asStateFlow()
+    private val _appsError = MutableStateFlow<String?>(null)
+    val appsError = _appsError.asStateFlow()
+
+    // Stats only need labels for packages with events, not every installed icon.
+    val statsAppLabels: StateFlow<Map<String, String>> = stats.map { summary ->
+        withContext(Dispatchers.IO) {
+            val pm = getApplication<Application>().packageManager
+            summary?.perApp.orEmpty().mapNotNull { app ->
+                runCatching {
+                    app.packageName to pm.getApplicationLabel(
+                        pm.getApplicationInfo(app.packageName, 0),
+                    ).toString()
+                }.getOrNull()
+            }.toMap()
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val _hasUsagePermission = MutableStateFlow(false)
     val hasUsagePermission: StateFlow<Boolean> = _hasUsagePermission.asStateFlow()
@@ -193,31 +216,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             accessibilityEnabled = isAccessibilityServiceEnabled(ctx),
             batteryUnrestricted = isIgnoringBatteryOptimizations(ctx),
         )
-        _hasUsagePermission.value = hasUsageStatsPermission(ctx)
+        val usageGranted = hasUsageStatsPermission(ctx)
+        if (_hasUsagePermission.value != usageGranted) {
+            _hasUsagePermission.value = usageGranted
+            refreshUsageStats()
+        }
     }
 
-    fun loadApps() {
-        if (_installedApps.value.isNotEmpty()) return
+    fun loadApps(allApps: Boolean = false) {
         viewModelScope.launch {
-            val ctx = getApplication<Application>()
-            val apps = withContext(Dispatchers.IO) { loadLaunchableApps(ctx) }
-            val usageMap = withContext(Dispatchers.IO) {
-                if (hasUsageStatsPermission(ctx)) getUsageStats(ctx) else emptyMap()
-            }
-            _installedApps.value = apps.map { app ->
-                app.copy(usageTimeMs = usageMap[app.packageName] ?: 0L)
+            appLoadMutex.withLock {
+                if (allAppsLoaded || (!allApps && socialAppsLoaded)) {
+                    _appsError.value = null
+                    return@withLock
+                }
+                _appsLoading.value = true
+                _appsError.value = null
+                try {
+                    val ctx = getApplication<Application>()
+                    val cached = _installedApps.value
+                    val apps = withContext(Dispatchers.IO) {
+                        loadLaunchableApps(ctx, socialOnly = !allApps, cachedApps = cached)
+                    }
+                    val usageMap = withContext(Dispatchers.IO) {
+                        if (hasUsageStatsPermission(ctx)) getUsageStats(ctx) else emptyMap()
+                    }
+                    _installedApps.value = apps.map { app ->
+                        app.copy(usageTimeMs = usageMap[app.packageName] ?: 0L)
+                    }
+                    socialAppsLoaded = true
+                    if (allApps) allAppsLoaded = true
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    _appsError.value = "Не удалось загрузить приложения. Попробуйте ещё раз."
+                } finally {
+                    _appsLoading.value = false
+                }
             }
         }
     }
 
     fun refreshUsageStats() {
+        if (!socialAppsLoaded) return
         viewModelScope.launch {
-            val ctx = getApplication<Application>()
-            val usageMap = withContext(Dispatchers.IO) {
-                if (hasUsageStatsPermission(ctx)) getUsageStats(ctx) else emptyMap()
-            }
-            _installedApps.value = _installedApps.value.map { app ->
-                app.copy(usageTimeMs = usageMap[app.packageName] ?: 0L)
+            appLoadMutex.withLock {
+                val ctx = getApplication<Application>()
+                val usageMap = withContext(Dispatchers.IO) {
+                    if (hasUsageStatsPermission(ctx)) getUsageStats(ctx) else emptyMap()
+                }
+                _installedApps.value = _installedApps.value.map { app ->
+                    app.copy(usageTimeMs = usageMap[app.packageName] ?: 0L)
+                }
             }
         }
     }
