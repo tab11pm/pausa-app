@@ -41,4 +41,18 @@ class ForegroundPolicyTest : TestCase() {
     fun testRepeatedWindowInSameAppDoesNotRestartSession() {
         assertFalse(ForegroundPolicy.isAppSwitch("tracked.app", "tracked.app", null))
     }
+
+    fun testChooserClassDoesNotEndCurrentSessionWhenPackageResolutionIsUnavailable() {
+        assertFalse(ForegroundPolicy.isAppSwitch(
+            "tracked.app", "vendor.system.chooser", null,
+            windowClass = "com.vendor.intent.ChooserActivity",
+        ))
+    }
+
+    fun testRealShareTargetStillEndsCurrentSession() {
+        assertTrue(ForegroundPolicy.isAppSwitch(
+            "tracked.app", "messenger.app", null,
+            windowClass = "com.messenger.ShareActivity",
+        ))
+    }
 }
