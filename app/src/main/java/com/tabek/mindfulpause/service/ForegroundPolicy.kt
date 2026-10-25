@@ -7,9 +7,12 @@ internal object ForegroundPolicy {
         nextPackage: String,
         imePackage: String?,
         ownPackage: String? = null,
+        windowClass: String? = null,
     ): Boolean =
         nextPackage != ownPackage && nextPackage != currentPackage && nextPackage != imePackage &&
-            nextPackage !in transientPackages
+            nextPackage !in transientPackages &&
+            windowClass?.endsWith(".ChooserActivity") != true &&
+            windowClass?.endsWith(".ResolverActivity") != true
 
     private val transientPackages = setOf(
         "android",

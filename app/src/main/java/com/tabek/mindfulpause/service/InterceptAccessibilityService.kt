@@ -67,6 +67,7 @@ class InterceptAccessibilityService : AccessibilityService() {
      *  into it (after "Продолжить") or when they left it. If they return
      *  within RE_PAUSE_MS the pause is skipped; after that gap it pauses again. */
     private val lastGrantAt = HashMap<String, Long>()
+    private val pictureInPicture = PictureInPicturePresence()
 
     /** Package the user is currently inside after continuing, so leaving it
      *  can stamp the "left at" time. */
@@ -146,7 +147,24 @@ class InterceptAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            event.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
+
+        val visibleWindows = runCatching { windows }.getOrDefault(emptyList())
+        pictureInPicture.observe(
+            visibleWindows.asSequence()
+                .filter { it.isInPictureInPictureMode }
+                .mapNotNull { window ->
+                    window.root?.packageName?.toString()
+                        ?: event.packageName?.toString()?.takeIf { window.id == event.windowId }
+                }
+                .toSet(),
+            SystemClock.elapsedRealtime(),
+        )
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+
+        // PiP may emit its own state changes while another app has focus.
+        if (visibleWindows.any { it.id == event.windowId && it.isInPictureInPictureMode }) return
 
         val pkg = event.packageName?.toString() ?: return
 
@@ -158,7 +176,10 @@ class InterceptAccessibilityService : AccessibilityService() {
 
         // System dialogs, keyboards and screenshot tools do not end an app
         // session. In particular, keep an unanswered reminder on screenshot.
-        if (!ForegroundPolicy.isAppSwitch(currentForeground, pkg, imePackage, packageName)) return
+        if (!ForegroundPolicy.isAppSwitch(
+                currentForeground, pkg, imePackage, packageName,
+                event.className?.toString(),
+            )) return
         cancelReminder("app_switch:$pkg")
         val previous = currentForeground
         currentForeground = pkg
@@ -203,7 +224,9 @@ class InterceptAccessibilityService : AccessibilityService() {
 
         // Recently continued into this app and came back quickly? Skip the
         // pause. After RE_PAUSE_MS away, it pauses again.
-        val grantedAt = lastGrantAt[pkg]
+        val grantedAt = lastGrantAt[pkg]?.let { grant ->
+            maxOf(grant, pictureInPicture.lastVisibleAt(pkg) ?: grant)
+        }
         if (grantedAt != null && elapsedNow - grantedAt < RE_PAUSE_MS) {
             grantedPackage = pkg               // we're inside it again
             lastGrantAt[pkg] = elapsedNow      // keep the grant fresh while here
